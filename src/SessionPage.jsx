@@ -1,15 +1,23 @@
 import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import TranscriptView from "./components/TranscriptView.jsx";
 import NotesView from "./components/NotesView.jsx";
 import ChatbotView from "./components/ChatbotView.jsx";
 
 export default function SessionPage() {
   const { sessionId } = useParams();
+  const location = useLocation();
+
+  // If we navigated here from HomePage after transcription:
+  const initialTranscript = location.state?.transcript || "";
+  const originalFileName = location.state?.originalFileName || "";
 
   const [activeTab, setActiveTab] = useState("transcript"); // "transcript" | "notes" | "chat"
-  const [transcript, setTranscript] = useState("");
-  const [isLoadingTranscript, setIsLoadingTranscript] = useState(true);
+
+  const [transcript, setTranscript] = useState(initialTranscript);
+  const [isLoadingTranscript, setIsLoadingTranscript] = useState(
+    !initialTranscript
+  );
 
   const [notes, setNotes] = useState("");
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
@@ -19,25 +27,19 @@ export default function SessionPage() {
 
   const [error, setError] = useState("");
 
-  // Fetch transcript when sessionId changes
+  // If no transcript was passed in, fall back to placeholder
   useEffect(() => {
     const fetchTranscript = async () => {
       try {
         setIsLoadingTranscript(true);
         setError("");
 
-        // TODO: call your real backend:
-        // const res = await fetch(`/api/session/${sessionId}/transcript`);
-        // const data = await res.json();
-        // setTranscript(data.transcript);
-
-        // Temporary fake data:
-        setTimeout(() => {
-          setTranscript(
-            `Transcript for session "${sessionId}".\n\nThis is where your real transcript text will appear.`
-          );
-          setIsLoadingTranscript(false);
-        }, 400);
+        // Placeholder / fallback if someone hits this URL directly.
+        // Later you can replace this with a real fetch from your DB by sessionId.
+        setTranscript(
+          `Transcript for session "${sessionId}".\n\nNo transcript was provided in navigation state. This is placeholder text.`
+        );
+        setIsLoadingTranscript(false);
       } catch (err) {
         console.error(err);
         setError("Failed to load transcript.");
@@ -45,65 +47,82 @@ export default function SessionPage() {
       }
     };
 
-    if (sessionId) {
+    if (!initialTranscript && sessionId) {
       fetchTranscript();
     }
-  }, [sessionId]);
+  }, [sessionId, initialTranscript]);
 
-  // Generate notes handler
+  // Generate notes from transcript via mini API
   const handleGenerateNotes = async () => {
+    if (!transcript.trim() || isGeneratingNotes) return;
+
     try {
       setIsGeneratingNotes(true);
       setError("");
 
-      // TODO: call your real backend:
-      // const res = await fetch(`/api/session/${sessionId}/notes`, { method: "POST" });
-      // const data = await res.json();
-      // setNotes(data.notes);
+      const res = await fetch("http://localhost:8000/api/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript,
+          sessionId,
+        }),
+      });
 
-      // Fake notes for now:
-      setTimeout(() => {
-        setNotes(
-          `• Key idea 1 about session "${sessionId}".\n• Key idea 2.\n• Summary bullet 3.`
-        );
-        setIsGeneratingNotes(false);
-      }, 400);
+      if (!res.ok) {
+        throw new Error("Notes request failed");
+      }
+
+      const data = await res.json();
+      setNotes(data.notes || "");
     } catch (err) {
       console.error(err);
-      setError("Failed to generate notes.");
+      setError(
+        "Failed to generate notes. Make sure the local API server is running."
+      );
+    } finally {
       setIsGeneratingNotes(false);
     }
   };
 
-  // Chat handler
+  // Chat handler using /api/chat
   const handleSendMessage = async (userText) => {
-    if (!userText.trim()) return;
+    if (!userText.trim() || isSendingMessage) return;
 
     const newUserMessage = { role: "user", content: userText };
-    setMessages((prev) => [...prev, newUserMessage]);
+    const updatedMessages = [...messages, newUserMessage];
+
+    setMessages(updatedMessages);
     setIsSendingMessage(true);
     setError("");
 
     try {
-      // TODO: call your real backend:
-      // const res = await fetch(`/api/session/${sessionId}/chat`, {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({ messages: [...messages, newUserMessage] }),
-      // });
-      // const data = await res.json();
-      // const assistantMessage = { role: "assistant", content: data.reply };
+      const res = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript,
+          sessionId,
+          messages: updatedMessages,
+        }),
+      });
 
-      // Fake reply:
+      if (!res.ok) {
+        throw new Error("Chat request failed");
+      }
+
+      const data = await res.json();
       const assistantMessage = {
         role: "assistant",
-        content: `This is a placeholder answer about session "${sessionId}".`,
+        content: data.reply || "",
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
       console.error(err);
-      setError("Failed to send message.");
+      setError(
+        "Failed to send message. Make sure the local API server is running."
+      );
     } finally {
       setIsSendingMessage(false);
     }
@@ -117,6 +136,11 @@ export default function SessionPage() {
           <h2 className="text-lg font-semibold">
             Session: <span className="text-blue-300">{sessionId}</span>
           </h2>
+          {originalFileName && (
+            <span className="text-xs text-slate-400">
+              ({originalFileName})
+            </span>
+          )}
         </div>
 
         <div className="flex gap-2 text-sm">

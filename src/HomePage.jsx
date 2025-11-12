@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 
 export default function HomePage() {
   const navigate = useNavigate();
+
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const handleFiles = (files) => {
     const picked = files && files[0];
@@ -51,15 +53,44 @@ export default function HomePage() {
   };
 
   const handleProcess = async () => {
-    if (!file) return;
+    if (!file || isProcessing) return;
 
-    // TODO: send file to backend for transcription
-    // For now, fake a session id:
-    const fakeSessionId = "lecture-1";
-    navigate(`/session/${fakeSessionId}`);
+    try {
+      setIsProcessing(true);
+      setError("");
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("http://localhost:8000/api/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error("Transcription request failed");
+      }
+
+      const data = await res.json();
+
+      // Navigate to SessionPage, passing transcript via route state
+      navigate(`/session/${data.sessionId}`, {
+        state: {
+          transcript: data.transcript,
+          originalFileName: file.name,
+        },
+      });
+    } catch (err) {
+      console.error(err);
+      setError(
+        "Failed to transcribe audio. Make sure the local API server is running."
+      );
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const canProcess = !!file;
+  const canProcess = !!file && !isProcessing;
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -128,7 +159,7 @@ export default function HomePage() {
                 : "bg-slate-700 text-slate-500 cursor-not-allowed",
             ].join(" ")}
           >
-            Process
+            {isProcessing ? "Processing..." : "Process"}
           </button>
         </div>
       </div>
