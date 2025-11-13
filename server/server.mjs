@@ -26,20 +26,69 @@ const upload = multer({ dest: "uploads/" });
 // --- POST /api/transcribe ---
 // Accepts: multipart/form-data with field "file"
 // Returns: { sessionId, transcript }
+// --- POST /api/transcribe ---
+// Accepts: multipart/form-data with field "file"
+// Returns: { sessionId, transcript }
+import path from "path";
+// make sure this import is at the top of server.mjs with the others
+
+// --- POST /api/transcribe ---
+// Accepts: multipart/form-data with field "file"
+// Returns: { sessionId, transcript }
 app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No audio file uploaded." });
   }
 
+  console.log("Incoming file:", {
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    path: req.file.path,
+  });
+
+  // Double-check it's not empty
+  if (!req.file.size || req.file.size === 0) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: "Uploaded file is empty." });
+  }
+
+  // Only allow formats Whisper supports (by mimetype)
+  const allowedMimeTypes = [
+    "audio/mpeg",     // mp3
+    "audio/mp3",      // sometimes used
+    "audio/mp4",      // m4a/mp4
+    "audio/x-m4a",    // m4a (Apple, your case)
+    "audio/wav",
+    "audio/x-wav",
+    "audio/ogg",
+    "audio/webm",
+    "audio/flac",
+  ];
+
+  if (!allowedMimeTypes.includes(req.file.mimetype)) {
+    console.warn("Blocked unsupported mimetype:", req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({
+      error: `Unsupported audio type: ${req.file.mimetype}. Try exporting as .mp3, .m4a, or .wav.`,
+    });
+  }
+
+  // Get the original extension (e.g. ".m4a")
+  const ext = path.extname(req.file.originalname) || "";
+  const newPath = req.file.path + ext;
+
+  // Rename temp file so it has an extension that OpenAI can use
+  fs.renameSync(req.file.path, newPath);
+
   try {
-    const audioStream = fs.createReadStream(req.file.path);
+    const audioStream = fs.createReadStream(newPath);
 
     const transcription = await client.audio.transcriptions.create({
-      file: audioStream,
-      model: "whisper-1", // Speech-to-text model :contentReference[oaicite:1]{index=1}
+      file: audioStream,          // <- just the stream, SDK expects this
+      model: "whisper-1",
     });
 
-    // Simple session id (you can later tie this to a real DB if you want)
     const sessionId = `session-${Date.now()}`;
 
     res.json({
@@ -48,12 +97,15 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     });
   } catch (err) {
     console.error("Transcription error:", err);
-    res.status(500).json({ error: "Transcription failed." });
+    res.status(500).json({
+      error: "Transcription failed. Check server logs for details.",
+    });
   } finally {
-    // Clean up temp file
-    fs.unlink(req.file.path, () => {});
+    fs.unlink(newPath, () => {});
   }
 });
+
+
 
 // --- POST /api/chat ---
 // Accepts: { transcript, messages }
