@@ -1,17 +1,20 @@
-import React from "react";
+// src/OreosSidebar.jsx
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-
-const HISTORY_ITEMS = [
-  { id: "new", title: "➕ New session", subtitle: "Start a fresh upload" },
-  { id: "lecture-1", title: "Lecture 1 – Algorithms", subtitle: "Sept 20 • 52 min" },
-  { id: "lecture-2", title: "Lecture 2 – HCI", subtitle: "Sept 22 • 47 min" },
-  { id: "meeting-1", title: "Project check-in", subtitle: "Sept 24 • 30 min" },
-];
+import { getSessionList } from "./sessionStorage";
 
 export default function OreosSidebar() {
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const location = useLocation();
+
+  const [historyItems, setHistoryItems] = useState([]);
+
+  // Reload history whenever location changes (e.g., after a new upload)
+  useEffect(() => {
+    const sessions = getSessionList();
+    setHistoryItems(sessions);
+  }, [location.pathname]);
 
   const currentId =
     location.pathname === "/" ? "new" : sessionId || "new";
@@ -24,19 +27,34 @@ export default function OreosSidebar() {
       </div>
 
       <div className="mt-2 flex-1 overflow-y-auto px-2 pb-4 space-y-1">
-        {HISTORY_ITEMS.map((item) => {
+        {/* New session button */}
+        <button
+          type="button"
+          onClick={() => navigate("/")}
+          className={[
+            "w-full text-left px-3 py-2 rounded-lg transition",
+            "flex flex-col gap-0.5",
+            currentId === "new"
+              ? "bg-slate-800/90 text-slate-50 border border-slate-700"
+              : "text-slate-300 hover:bg-slate-800/70 hover:text-slate-50",
+          ].join(" ")}
+        >
+          <span className="text-sm font-medium truncate">
+            ➕ New session
+          </span>
+          <span className="text-[11px] text-slate-400 truncate">
+            Start a fresh upload
+          </span>
+        </button>
+
+        {/* Dynamic history items */}
+        {historyItems.map((item) => {
           const isActive = item.id === currentId;
           return (
             <button
               key={item.id}
               type="button"
-              onClick={() => {
-                if (item.id === "new") {
-                  navigate("/");
-                } else {
-                  navigate(`/session/${item.id}`);
-                }
-              }}
+              onClick={() => navigate(`/session/${item.id}`)}
               className={[
                 "w-full text-left px-3 py-2 rounded-lg transition",
                 "flex flex-col gap-0.5",

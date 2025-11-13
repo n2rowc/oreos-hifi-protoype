@@ -1,5 +1,7 @@
+// src/HomePage.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { saveSession } from "./sessionStorage";
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -13,15 +15,31 @@ export default function HomePage() {
     const picked = files && files[0];
     if (!picked) return;
 
+    // Only allow formats Whisper supports
+    const allowedExtensions = [
+      ".flac",
+      ".m4a",
+      ".mp3",
+      ".mp4",
+      ".mpeg",
+      ".mpga",
+      ".oga",
+      ".ogg",
+      ".wav",
+      ".webm",
+    ];
+
     const isAudioType =
-      picked.type.startsWith("audio/") ||
-      [".mp3", ".wav", ".m4a", ".aac", ".ogg"].some((ext) =>
+      picked.type.startsWith("audio/") &&
+      allowedExtensions.some((ext) =>
         picked.name.toLowerCase().endsWith(ext)
       );
 
     if (!isAudioType) {
       setFile(null);
-      setError("Please upload an audio file (.mp3, .wav, .m4a, etc.).");
+      setError(
+        "Please upload a supported audio file (.mp3, .m4a, .wav, .ogg, .webm, etc.)."
+      );
       return;
     }
 
@@ -73,13 +91,17 @@ export default function HomePage() {
 
       const data = await res.json();
 
-      // Navigate to SessionPage, passing transcript via route state
-      navigate(`/session/${data.sessionId}`, {
-        state: {
-          transcript: data.transcript,
-          originalFileName: file.name,
-        },
+      // Save session to localStorage so it shows up in sidebar & is persistent
+      saveSession({
+        id: data.sessionId,
+        transcript: data.transcript,
+        originalFileName: file.name,
+        notes: "",
+        messages: [],
       });
+
+      // Navigate to SessionPage
+      navigate(`/session/${data.sessionId}`);
     } catch (err) {
       console.error(err);
       setError(
@@ -126,7 +148,7 @@ export default function HomePage() {
 
             <div className="inline-flex items-center gap-2 text-[11px] text-slate-400">
               <span className="h-px w-6 bg-slate-700" />
-              Supported: .mp3, .wav, .m4a, .aac, .ogg
+              Supported: .mp3, .m4a, .wav, .ogg, .webm, etc.
               <span className="h-px w-6 bg-slate-700" />
             </div>
           </label>

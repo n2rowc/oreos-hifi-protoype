@@ -1,43 +1,47 @@
+// src/SessionPage.jsx
 import React, { useEffect, useState } from "react";
-import { useParams, useLocation } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import TranscriptView from "./components/TranscriptView.jsx";
 import NotesView from "./components/NotesView.jsx";
 import ChatbotView from "./components/ChatbotView.jsx";
+import { getSession, saveSession } from "./sessionStorage";
 
 export default function SessionPage() {
   const { sessionId } = useParams();
-  const location = useLocation();
 
-  // If we navigated here from HomePage after transcription:
-  const initialTranscript = location.state?.transcript || "";
-  const originalFileName = location.state?.originalFileName || "";
+  const stored = sessionId ? getSession(sessionId) || {} : {};
 
   const [activeTab, setActiveTab] = useState("transcript"); // "transcript" | "notes" | "chat"
 
-  const [transcript, setTranscript] = useState(initialTranscript);
+  const [transcript, setTranscript] = useState(stored.transcript || "");
   const [isLoadingTranscript, setIsLoadingTranscript] = useState(
-    !initialTranscript
+    !stored.transcript
   );
 
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(stored.notes || "");
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
 
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(stored.messages || []);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
 
   const [error, setError] = useState("");
 
-  // If no transcript was passed in, fall back to placeholder
+  const originalFileName = stored.originalFileName || "";
+
+  // If we don't have a stored transcript (e.g. user opened a random URL),
+  // show a placeholder. Normally all real sessions will come from HomePage upload.
   useEffect(() => {
-    const fetchTranscript = async () => {
+    const maybeLoadFallback = async () => {
+      if (stored.transcript) {
+        setIsLoadingTranscript(false);
+        return;
+      }
       try {
         setIsLoadingTranscript(true);
         setError("");
 
-        // Placeholder / fallback if someone hits this URL directly.
-        // Later you can replace this with a real fetch from your DB by sessionId.
         setTranscript(
-          `Transcript for session "${sessionId}".\n\nNo transcript was provided in navigation state. This is placeholder text.`
+          `Transcript for session "${sessionId}".\n\nNo transcript was found in local history. This is placeholder text.`
         );
         setIsLoadingTranscript(false);
       } catch (err) {
@@ -47,10 +51,21 @@ export default function SessionPage() {
       }
     };
 
-    if (!initialTranscript && sessionId) {
-      fetchTranscript();
+    if (sessionId) {
+      maybeLoadFallback();
     }
-  }, [sessionId, initialTranscript]);
+  }, [sessionId, stored.transcript]);
+
+  // Always keep the latest transcript / metadata saved
+  useEffect(() => {
+    if (sessionId && transcript) {
+      saveSession({
+        id: sessionId,
+        transcript,
+        originalFileName,
+      });
+    }
+  }, [sessionId, transcript, originalFileName]);
 
   // Generate notes from transcript via mini API
   const handleGenerateNotes = async () => {
@@ -74,7 +89,16 @@ export default function SessionPage() {
       }
 
       const data = await res.json();
-      setNotes(data.notes || "");
+      const newNotes = data.notes || "";
+      setNotes(newNotes);
+
+      // Persist notes for this session
+      if (sessionId) {
+        saveSession({
+          id: sessionId,
+          notes: newNotes,
+        });
+      }
     } catch (err) {
       console.error(err);
       setError(
@@ -117,7 +141,16 @@ export default function SessionPage() {
         content: data.reply || "",
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      const finalMessages = [...updatedMessages, assistantMessage];
+      setMessages(finalMessages);
+
+      // Persist chat history for this session
+      if (sessionId) {
+        saveSession({
+          id: sessionId,
+          messages: finalMessages,
+        });
+      }
     } catch (err) {
       console.error(err);
       setError(
