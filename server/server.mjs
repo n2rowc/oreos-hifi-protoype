@@ -6,7 +6,46 @@ import fs from "fs";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 
+
+function buildNotesPrompt(transcript, userRequests = "") {
+  const trimmedRequests = (userRequests || "").trim();
+
+  const requestsText = trimmedRequests
+    ? trimmedRequests
+    : "No additional user requests were provided. Use your best judgment to create helpful, collegiate-level notes.";
+
+  return `
+You are an AI assistant generating high-quality lecture notes for a college student.
+
+Your responsibilities:
+- Analyze the attached lecture transcript in full.
+- Do NOT transcribe or quote the lecture verbatim.
+- Instead, create *student notes* that explain the concepts, ideas, and reasoning.
+- You may add brief related context, definitions, or examples to help understanding,
+  as long as they are accurate and relevant to the lecture topic.
+
+Formatting requirements:
+- Return the notes in **Markdown**.
+- Use clear section headers (##, ###).
+- Use bullet points and sub-bullets where helpful.
+- Maintain logical flow that matches how the content would be taught in class.
+- Aim for a collegiate, study-friendly style: organized, readable, and not overly verbose.
+
+User requests to incorporate (tone, structure, extra content, length, etc.):
+${requestsText}
+
+Lecture transcript to analyze:
+${transcript}
+
+Your task:
+Create a stylistic note guide in Markdown with section headers, bullet points,
+and a natural flow that covers the material taught in this lecture. Focus on
+helping the student review and learn from this class session.
+`;
+}
+
 dotenv.config();
+
 
 const app = express();
 const port = 8000;
@@ -150,11 +189,13 @@ app.listen(port, () => {
 
 app.post("/api/notes", async (req, res) => {
   try {
-    const { transcript, sessionId } = req.body;
+    const { transcript, sessionId, userRequests } = req.body;
 
     if (!transcript || !transcript.trim()) {
       return res.status(400).json({ error: "Transcript is required." });
     }
+
+    const prompt = buildNotesPrompt(transcript, userRequests);
 
     const completion = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -162,15 +203,15 @@ app.post("/api/notes", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a helpful note-taking assistant. Given a lecture transcript, produce clean, concise bullet-point notes.",
+            "You are an expert note-taking assistant that generates high-quality collegiate lecture notes in Markdown.",
         },
         {
           role: "user",
-          content: `Create detailed bullet-point notes for this lecture:\n\n${transcript}`,
+          content: prompt,
         },
       ],
       temperature: 0.3,
-      max_tokens: 800,
+      max_tokens: 1000,
     });
 
     const notes = completion.choices[0]?.message?.content || "";
@@ -180,3 +221,4 @@ app.post("/api/notes", async (req, res) => {
     res.status(500).json({ error: "Failed to generate notes." });
   }
 });
+

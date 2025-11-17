@@ -9,86 +9,111 @@ import { getSession, saveSession } from "./sessionStorage";
 export default function SessionPage() {
   const { sessionId } = useParams();
 
-  const stored = sessionId ? getSession(sessionId) || {} : {};
-
   const [activeTab, setActiveTab] = useState("transcript"); // "transcript" | "notes" | "chat"
 
-  const [transcript, setTranscript] = useState(stored.transcript || "");
-  const [isLoadingTranscript, setIsLoadingTranscript] = useState(
-    !stored.transcript
-  );
+  const [transcript, setTranscript] = useState("");
+  const [isLoadingTranscript, setIsLoadingTranscript] = useState(true);
 
-  const [notes, setNotes] = useState(stored.notes || "");
+  const [notes, setNotes] = useState("");
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
 
-  const [messages, setMessages] = useState(stored.messages || []);
+  const [messages, setMessages] = useState([]);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+
+  const [originalFileName, setOriginalFileName] = useState("");
+  const [title, setTitle] = useState("");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   const [error, setError] = useState("");
 
-  const originalFileName = stored.originalFileName || "";
-
-  // If we don't have a stored transcript (e.g. user opened a random URL),
-  // show a placeholder. Normally all real sessions will come from HomePage upload.
+  // Load session data whenever the sessionId changes
   useEffect(() => {
-    const maybeLoadFallback = async () => {
-      if (stored.transcript) {
-        setIsLoadingTranscript(false);
-        return;
-      }
-      try {
-        setIsLoadingTranscript(true);
-        setError("");
+    if (!sessionId) return;
 
-        setTranscript(
-          `Transcript for session "${sessionId}".\n\nNo transcript was found in local history. This is placeholder text.`
-        );
-        setIsLoadingTranscript(false);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load transcript.");
-        setIsLoadingTranscript(false);
-      }
-    };
+    setIsLoadingTranscript(true);
+    setError("");
 
-    if (sessionId) {
-      maybeLoadFallback();
+    const stored = getSession(sessionId);
+
+    if (stored) {
+      setTranscript(stored.transcript || "");
+      setNotes(stored.notes || "");
+      setMessages(stored.messages || []);
+      setOriginalFileName(stored.originalFileName || "");
+      setTitle(
+        stored.title ||
+          stored.originalFileName ||
+          sessionId
+      );
+    } else {
+      // Fallback if user opens a random URL
+      setTranscript(
+        `Transcript for session "${sessionId}".\n\nNo transcript was found in local history. This is placeholder text.`
+      );
+      setNotes("");
+      setMessages([]);
+      setOriginalFileName("");
+      setTitle(sessionId);
     }
-  }, [sessionId, stored.transcript]);
 
-  // Always keep the latest transcript / metadata saved
-  useEffect(() => {
-    if (sessionId && transcript) {
-      saveSession({
-        id: sessionId,
-        transcript,
-        originalFileName,
-      });
-    }
-  }, [sessionId, transcript, originalFileName]);
+    setIsLoadingTranscript(false);
+    setActiveTab("transcript");
+  }, [sessionId]);
 
-  // Generate notes from transcript via mini API
-  const handleGenerateNotes = async () => {
+  // Save edited title to localStorage
+  const handleTitleSave = () => {
+    if (!sessionId) return;
+
+    const trimmed = title.trim() || originalFileName || sessionId;
+    setTitle(trimmed);
+    setIsEditingTitle(false);
+
+    saveSession({
+      id: sessionId,
+      title: trimmed,
+    });
+  };
+
+  // Generate / regenerate notes from transcript via mini API
+  // Generate / regenerate notes from transcript via mini API
+  const handleGenerateNotes = async (userRequests = "") => {
     if (!transcript.trim() || isGeneratingNotes) return;
 
     try {
       setIsGeneratingNotes(true);
       setError("");
 
+      // 🔒 Coerce everything to safe types
+      const safeTranscript = typeof transcript === "string" ? transcript : String(transcript ?? "");
+      const safeSessionId = typeof sessionId === "string" ? sessionId : String(sessionId ?? "");
+      const safeUserRequests =
+        typeof userRequests === "string" ? userRequests : "";
+
+      const payload = {
+        transcript: safeTranscript,
+        sessionId: safeSessionId,
+        userRequests: safeUserRequests,
+      };
+
+      console.log("Calling /api/notes with payload:", {
+        ...payload,
+        transcriptLength: safeTranscript.length,
+      });
+
       const res = await fetch("http://localhost:8000/api/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript,
-          sessionId,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        throw new Error("Notes request failed");
+        const text = await res.text();
+        console.error("Notes HTTP error:", res.status, text);
+        throw new Error(`Notes request failed with status ${res.status}`);
       }
 
       const data = await res.json();
+      console.log("Notes response JSON:", data);
       const newNotes = data.notes || "";
       setNotes(newNotes);
 
@@ -100,14 +125,15 @@ export default function SessionPage() {
         });
       }
     } catch (err) {
-      console.error(err);
+      console.error("handleGenerateNotes error:", err);
       setError(
-        "Failed to generate notes. Make sure the local API server is running."
+        "Failed to generate notes. Check the browser console and server logs for details."
       );
     } finally {
       setIsGeneratingNotes(false);
     }
   };
+
 
   // Chat handler using /api/chat
   const handleSendMessage = async (userText) => {
@@ -163,20 +189,55 @@ export default function SessionPage() {
 
   return (
     <div className="flex-1 flex flex-col h-full">
-      {/* Top navbar with tabs */}
-      <div className="border-b border-slate-800 px-6 pt-4 pb-2 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">
-            Session: <span className="text-blue-300">{sessionId}</span>
-          </h2>
-          {originalFileName && (
-            <span className="text-xs text-slate-400">
-              ({originalFileName})
-            </span>
-          )}
+      {/* Top header: title, file name, then tabs */}
+      <div className="border-b border-slate-800 px-6 pt-4 pb-3 flex flex-col gap-2">
+        {/* Title row */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {isEditingTitle ? (
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={handleTitleSave}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleTitleSave();
+                  if (e.key === "Escape") {
+                    setIsEditingTitle(false);
+                  }
+                }}
+                autoFocus
+                className="bg-slate-900/80 border border-slate-700 rounded px-2 py-1 text-sm text-slate-50 w-full focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            ) : (
+              <h2 className="text-lg font-semibold text-slate-50 truncate">
+                {title}
+              </h2>
+            )}
+
+            {!isEditingTitle && (
+              <button
+                type="button"
+                onClick={() => setIsEditingTitle(true)}
+                className="text-[11px] px-2 py-0.5 rounded-full border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-shadows"
+              >
+                Edit title
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex gap-2 text-sm">
+        {/* Subtitle row: original file name */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="text-xs text-slate-400 truncate">
+            {originalFileName
+              ? `Original file: ${originalFileName}`
+              : `Session ID: ${sessionId}`}
+          </div>
+        </div>
+
+        {/* Tabs row */}
+        <div className="flex gap-2 text-sm mt-1">
           {["transcript", "notes", "chat"].map((tab) => {
             const label =
               tab === "transcript"
