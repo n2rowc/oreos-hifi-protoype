@@ -3,75 +3,81 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import fs from "fs";
+import path from "path";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 
-
-function buildNotesPrompt(transcript, userRequests = "") {
-  const trimmedRequests = (userRequests || "").trim();
-
-  const requestsText = trimmedRequests
-    ? trimmedRequests
-    : "No additional user requests were provided. Use your best judgment to create helpful, collegiate-level notes.";
-
-  return `
-You are an AI assistant generating high-quality lecture notes for a college student.
-
-Your responsibilities:
-- Analyze the attached lecture transcript in full.
-- Do NOT transcribe or quote the lecture verbatim.
-- Instead, create *student notes* that explain the concepts, ideas, and reasoning.
-- You may add brief related context, definitions, or examples to help understanding,
-  as long as they are accurate and relevant to the lecture topic.
-
-Formatting requirements:
-- Return the notes in **Markdown**.
-- Use clear section headers (##, ###).
-- Use bullet points and sub-bullets where helpful.
-- Maintain logical flow that matches how the content would be taught in class.
-- Aim for a collegiate, study-friendly style: organized, readable, and not overly verbose.
-
-User requests to incorporate (tone, structure, extra content, length, etc.):
-${requestsText}
-
-Lecture transcript to analyze:
-${transcript}
-
-Your task:
-Create a stylistic note guide in Markdown with section headers, bullet points,
-and a natural flow that covers the material taught in this lecture. Focus on
-helping the student review and learn from this class session.
-`;
-}
-
 dotenv.config();
 
-
-const app = express();
-const port = 8000;
-
-// --- OpenAI client (reads OPENAI_API_KEY from .env) ---
+// ---------- OpenAI client ----------
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// --- Middleware ---
+// ---------- Helper: build messages for notes ----------
+function buildNotesMessages(transcript, userRequests = "") {
+  const trimmedRequests = (userRequests || "").trim();
+
+  const studentInstructions = trimmedRequests || "(none – use your best judgment)";
+
+  const systemContent = `
+You are an AI assistant generating high-quality lecture notes for a college student.
+
+GENERAL BEHAVIOR
+- Analyze the lecture transcript in full.
+- Do NOT transcribe or quote the lecture verbatim.
+- Instead, create *student notes* that explain the concepts, ideas, and reasoning.
+- You may add brief, accurate related context, definitions, or examples only when they help understanding.
+- Aim for a collegiate, study-friendly style: organized, readable, and not overly verbose.
+
+OUTPUT FORMAT
+- Default: Return notes in **Markdown**.
+- Use clear section headers (##, ###).
+- Use bullet points and short paragraphs for readability.
+- Maintain logical flow that roughly matches how the material would be taught in class.
+
+PRIORITY RULE (VERY IMPORTANT)
+- The student's explicit instructions about length, word count, tone, or formatting ALWAYS take precedence.
+- If the student asks for a specific **word count** (e.g., "Give me a 10-word summary"),
+  you MUST:
+  - Respond with exactly that many words,
+  - And nothing else (no headings, no bullets, no intro text).
+- If the student asks for a "short summary", "one paragraph", "exam-style bullets", etc.,
+  you MUST follow that shape instead of generating full, long-form notes.
+- Never ignore, dilute, or override the student's explicit instructions, even if they conflict with the default behavior.
+`.trim();
+
+  const userContent = `
+Student instructions:
+"""
+${studentInstructions}
+"""
+
+Lecture transcript:
+"""
+${transcript}
+"""
+
+Now produce your final answer, strictly following the priority rules above.
+`.trim();
+
+  return [
+    { role: "system", content: systemContent },
+    { role: "user", content: userContent },
+  ];
+}
+
+// ---------- Express setup ----------
+const app = express();
+const port = 8000;
+
 app.use(cors());
 app.use(express.json());
 
 // Multer for handling incoming audio files
 const upload = multer({ dest: "uploads/" });
 
-// --- POST /api/transcribe ---
-// Accepts: multipart/form-data with field "file"
-// Returns: { sessionId, transcript }
-// --- POST /api/transcribe ---
-// Accepts: multipart/form-data with field "file"
-// Returns: { sessionId, transcript }
-import path from "path";
-// make sure this import is at the top of server.mjs with the others
-
-// --- POST /api/transcribe ---
+// ---------- POST /api/transcribe ----------
 // Accepts: multipart/form-data with field "file"
 // Returns: { sessionId, transcript }
 app.post("/api/transcribe", upload.single("file"), async (req, res) => {
@@ -94,10 +100,10 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 
   // Only allow formats Whisper supports (by mimetype)
   const allowedMimeTypes = [
-    "audio/mpeg",     // mp3
-    "audio/mp3",      // sometimes used
-    "audio/mp4",      // m4a/mp4
-    "audio/x-m4a",    // m4a (Apple, your case)
+    "audio/mpeg", // mp3
+    "audio/mp3",
+    "audio/mp4", // m4a/mp4
+    "audio/x-m4a",
     "audio/wav",
     "audio/x-wav",
     "audio/ogg",
@@ -113,7 +119,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     });
   }
 
-  // Get the original extension (e.g. ".m4a")
+  // Get the original extension (e.g., ".m4a")
   const ext = path.extname(req.file.originalname) || "";
   const newPath = req.file.path + ext;
 
@@ -124,7 +130,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     const audioStream = fs.createReadStream(newPath);
 
     const transcription = await client.audio.transcriptions.create({
-      file: audioStream,          // <- just the stream, SDK expects this
+      file: audioStream,
       model: "whisper-1",
     });
 
@@ -144,9 +150,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
-
-
-// --- POST /api/chat ---
+// ---------- POST /api/chat ----------
 // Accepts: { transcript, messages }
 // Returns: { reply }
 app.post("/api/chat", async (req, res) => {
@@ -158,7 +162,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini", // small, cheap chat model :contentReference[oaicite:2]{index=2}
+      model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
@@ -169,7 +173,7 @@ app.post("/api/chat", async (req, res) => {
           role: "system",
           content: `LECTURE TRANSCRIPT:\n${transcript || "(no transcript provided)"}`,
         },
-        ...messages, // includes user + previous assistant messages
+        ...messages,
       ],
       temperature: 0.3,
       max_tokens: 512,
@@ -183,10 +187,9 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Local mini API running at http://localhost:${port}`);
-});
-
+// ---------- POST /api/notes ----------
+// Accepts: { transcript, sessionId, userRequests }
+// Returns: { notes }
 app.post("/api/notes", async (req, res) => {
   try {
     const { transcript, sessionId, userRequests } = req.body;
@@ -195,26 +198,18 @@ app.post("/api/notes", async (req, res) => {
       return res.status(400).json({ error: "Transcript is required." });
     }
 
-    const prompt = buildNotesPrompt(transcript, userRequests);
+    const messages = buildNotesMessages(transcript, userRequests);
+    console.log("Notes messages:", JSON.stringify(messages, null, 2));
 
     const completion = await client.chat.completions.create({
       model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert note-taking assistant that generates high-quality collegiate lecture notes in Markdown.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages,
       temperature: 0.3,
       max_tokens: 1000,
     });
 
     const notes = completion.choices[0]?.message?.content || "";
+    console.log("Notes output:\n", notes);
     res.json({ notes });
   } catch (err) {
     console.error("Notes error:", err);
@@ -222,3 +217,7 @@ app.post("/api/notes", async (req, res) => {
   }
 });
 
+// ---------- Start server ----------
+app.listen(port, () => {
+  console.log(`Local mini API running at http://localhost:${port}`);
+});
